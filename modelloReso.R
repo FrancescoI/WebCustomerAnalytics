@@ -90,18 +90,24 @@ train <- resi %>% select(FlagReso, OrderValue, Macro, Sconto, Frequency, Monetar
 ### Starting h2o
 h2o.init(nthreads = 3)
 
-train.h2o <- as.h2o(train)
+### Creating train and test frame
+set.seed(3456)
+trainIndex <- createDataPartition(train$FlagReso, p = .9, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train90 <- train[ trainIndex,]
+test10  <- train[-trainIndex,]
+
+train.h2o <- as.h2o(train90)
+test.h2o <- as.h2o(test10)
+
 y = 'FlagReso'
 x = setdiff(names(train.h2o), y)
-automl <- h2o.automl(x = x, y = y, training_frame = train.h2o)
+h2o.rf <- h2o.randomForest(x = x, y = y, training_frame = train.h2o, validation_frame = test.h2o, balance_classes = TRUE)
 
-automl
-
-
-### Visualizing
-ex1 %>% mutate(FlagReso = as.factor(FlagReso), Sconto = 1 - OrderValue/PotentialOrderValue) %>% ggplot(aes(OrderValue, fill = FlagReso)) + geom_density(alpha = 0.5) + facet_wrap( ~ as.factor(Macro), ncol = 4, scales = 'free') 
-
-ex1 %>% mutate(FlagReso = as.factor(FlagReso), Sconto = 1 - OrderValue/PotentialOrderValue) %>% group_by(FlagReso) %>% summarise(number = n())
+h2o.rf
+### AUC 0.76 on test set
 
 ### Closing connection
 odbcClose(conn)
