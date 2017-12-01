@@ -42,7 +42,7 @@ queryResi <- c("SELECT
            ON Utenti_ID = ID_Utenti
            LEFT JOIN SharedTables.ods.Dim_Product_Hier dph
            ON ro.Articolo_ID = dph.Articolo_ID
-           WHERE Descrizione = 'ARMANICOM' AND ANNO = '2017' AND MESE = '10'")
+           WHERE Descrizione = 'ARMANICOM' AND ANNO = '2017' AND CAST(MESE as INT) > 6")
 
 
 queryRFM <- c("SELECT
@@ -104,10 +104,10 @@ test.h2o <- as.h2o(test10)
 
 y = 'FlagReso'
 x = setdiff(names(train.h2o), y)
-h2o.rf <- h2o.randomForest(x = x, y = y, training_frame = train.h2o, validation_frame = test.h2o, balance_classes = TRUE)
+h2o.rf <- h2o.randomForest(x = x, y = y, training_frame = train.h2o, validation_frame = test.h2o, balance_classes = TRUE, seed = 1234, ntrees = 200)
 
 h2o.rf
-### AUC 0.76 on test set
+### AUC 0.87 on test set
 
 ### Closing connection
 odbcClose(conn)
