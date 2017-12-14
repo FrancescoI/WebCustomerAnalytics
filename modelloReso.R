@@ -119,15 +119,13 @@ test.h2o <- as.h2o(test10)
 
 y = 'FlagReso'
 x = setdiff(names(train.h2o), y)
-h2o.rf <- h2o.randomForest(x = x, y = y, training_frame = train.h2o, validation_frame = test.h2o, balance_classes = TRUE, seed = 1234, ntrees = 100, nfolds = 5, stopping_metric = 'RMSLE')
-h2o.automl <- h2o.automl(x = x, y = y, training_frame = train.h2o, validation_frame = test.h2o, nfolds = 5, max_runtime_secs = 600)
+h2o.rf <- h2o.randomForest(x = x, y = y, training_frame = train.h2o, validation_frame = test.h2o, balance_classes = TRUE, seed = 1234, ntrees = 50, stopping_metric = 'AUC')
+h2o.automl <- h2o.automl(x = x, y = y, training_frame = train.h2o, validation_frame = test.h2o, max_runtime_secs = 600)
 
 ###h2o.rf
 ### AUC 0.767 on test set
 
-confusionMatrix(as.vector(as.factor(ifelse(predict(h2o.rf
-                                                   , test.h2o)[,3] < 0.135070, 0, 1))), test10$FlagReso, positive = '1')
-View(train90)
+confusionMatrix(as.vector(as.factor(ifelse(as.data.frame(predict(h2o.rf, test.h2o))[,3] < 0.076993, 0, 1))), test10$FlagReso, positive = '1')
 
 ### Closing connection
 odbcClose(conn)
