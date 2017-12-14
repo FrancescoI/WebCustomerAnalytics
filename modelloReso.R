@@ -11,38 +11,43 @@ conn <- odbcDriverConnect(connection="Driver={SQL Server Native Client 11.0};ser
 
 ### Query
 queryResi <- c("SELECT
-    	     Ordini_ID,
-           SUBSTRING(Codice12, 0, 11) as C10,
-           DataReso_ID,
-           FlagReso,
-           OrderValue,
-           PotentialOrderValue,
-           ScontoPerc,
-           MicroMotivo_ID,
-           dph.Micro,
-           dph.Macro,
-           Sesso_ID,
-           Divisione_Acquisto_ID,
-           Descrizione,
-           Data_ID,
-           Utenti_ID,
-           utenti_mail,
-           utenti_mail_sha256,
-           ANNO,
-           MESE,
-           GIORNO
-           FROM [SharedTables].[ods].[RigheOrdini] ro 
-           LEFT JOIN [SharedTables].[ods].[Divisione]
-           ON Divisione_Acquisto_ID = ID_Divisione
-           LEFT JOIN [SharedTables].[ods].[Ordini]
-           ON Ordini_ID = ID_Ordini
-           LEFT JOIN [SharedTables].ods.Data
-           ON Data_ID = ID_Data
-           LEFT JOIN [SharedTables].ods.Utenti
-           ON Utenti_ID = ID_Utenti
-           LEFT JOIN SharedTables.ods.Dim_Product_Hier dph
-           ON ro.Articolo_ID = dph.Articolo_ID
-           WHERE Descrizione = 'ARMANICOM' AND ANNO = '2017' AND CAST(MESE as INT) > 6")
+               SUBSTRING(Codice12, 1, 11) C10, 
+               FlagReso,
+               OrderValue,
+               PotentialOrderValue,
+               dph.Micro,
+               dph.Macro,
+               s.DescrizioneAbbreviata_EN as sessoItem,
+               TipoSpedizione_ID_Cliente,
+               TipoPagamento_ID,
+               o.Nazioni_ID,
+               PaymentType_ID,
+               Freeshipping_ID,
+               FlagRegalo,
+               d.Descrizione,
+               Utenti_ID,
+               CASE WHEN utenti_sesso = 'F' THEN 'W'
+               ELSE utenti_sesso END as sessoUtenti,
+               utenti_mail,
+               utenti_mail_sha256,
+               ANNO,
+               MESE,
+               GIORNO,
+               Data
+               FROM [SharedTables].[ods].[RigheOrdini] ro 
+               LEFT JOIN [SharedTables].[ods].[Divisione] d
+               ON Divisione_Acquisto_ID = d.ID_Divisione
+               LEFT JOIN [SharedTables].[ods].[Ordini] as o
+               ON Ordini_ID = o.ID_Ordini
+               LEFT JOIN [SharedTables].ods.Data
+               ON Data_ID = ID_Data
+               LEFT JOIN [SharedTables].ods.Utenti
+               ON Utenti_ID = ID_Utenti
+               LEFT JOIN SharedTables.ods.Dim_Product_Hier dph
+               ON ro.Articolo_ID = dph.Articolo_ID
+               LEFT JOIN SharedTables.ods.Sesso s
+               ON Sesso_ID = s.ID_Sesso
+               WHERE d.Descrizione LIKE '%ARMANI%' AND ANNO = '2017'")
 
 
 queryRFM <- c("SELECT
@@ -62,7 +67,7 @@ queryRFM <- c("SELECT
               LEFT JOIN
               [SharedTables].[ods].[Data]
               ON Data_ID = ID_Data
-              WHERE CAST(Anno as INT) > 2015 AND Descrizione LIKE '%ARMANI%' AND Gross_Sales > 0
+              WHERE CAST(Anno as INT) > 2014 AND Descrizione LIKE '%ARMANI%' AND Gross_Sales > 0
               ")
 
 ### Executing Query
@@ -70,9 +75,19 @@ resi <- sqlQuery(conn, queryResi)
 acquisti <- sqlQuery(conn, queryRFM)
 
 ### Preprocessing Resi
-resi <- resi %>% mutate(FlagReso = as.factor(FlagReso), 
+resi <- resi %>% mutate_if(is.factor, as.character) %>% 
+                 mutate(FlagReso = as.factor(FlagReso),
+                      sessoItem = str_trim(sessoItem),
+                      corrispSessi = ifelse(sessoUtenti == ' ' | sessoUtenti == 'N', 'unknown', 
+                                            ifelse(sessoUtenti == sessoItem, 'yes', 'no')),
                       Sconto = 1 - OrderValue/PotentialOrderValue,
-                      Sesso_ID = as.factor(Sesso_ID))
+                      TipoSpedizione_ID_Cliente = as.factor(TipoSpedizione_ID_Cliente),
+                      TipoPagamento_ID = as.factor(TipoPagamento_ID),
+                      Nazioni_ID = as.factor(Nazioni_ID),
+                      PaymentType_ID = as.factor(PaymentType_ID),
+                      Freeshipping_ID = as.factor(Freeshipping_ID),
+                      FlagRegalo = as.factor(FlagRegalo)
+                      ) %>% mutate_if(is.character, as.factor)
 
 ### Preprocessing Acquisti
 acquisti <- acquisti %>% mutate_if(is.factor, as.character)
@@ -84,7 +99,7 @@ rfmResult <- rfm_auto(acquisti, id = 'utenti_mail_sha256', payment = 'Gross_Sale
 resi <- resi %>% left_join(rfmResult$rfm)
 
 ### Selecting Features
-train <- resi %>% select(FlagReso, OrderValue, Macro, Sconto, Frequency, Monetary, RecencyClass, FrequencyClass, MonetaryClass)
+train <- resi %>% select(FlagReso, OrderValue, Macro, sessoItem, sessoUtenti, corrispSessi, TipoSpedizione_ID_Cliente, PaymentType_ID, Freeshipping_ID, FlagRegalo, Sconto)
 
 
 ### Starting h2o
@@ -104,10 +119,15 @@ test.h2o <- as.h2o(test10)
 
 y = 'FlagReso'
 x = setdiff(names(train.h2o), y)
-h2o.rf <- h2o.randomForest(x = x, y = y, training_frame = train.h2o, validation_frame = test.h2o, balance_classes = TRUE, seed = 1234, ntrees = 200)
+h2o.rf <- h2o.randomForest(x = x, y = y, training_frame = train.h2o, validation_frame = test.h2o, balance_classes = TRUE, seed = 1234, ntrees = 100, nfolds = 5, stopping_metric = 'RMSLE')
+h2o.automl <- h2o.automl(x = x, y = y, training_frame = train.h2o, validation_frame = test.h2o, nfolds = 5, max_runtime_secs = 600)
 
-h2o.rf
-### AUC 0.87 on test set
+###h2o.rf
+### AUC 0.767 on test set
+
+confusionMatrix(as.vector(as.factor(ifelse(predict(h2o.rf
+                                                   , test.h2o)[,3] < 0.135070, 0, 1))), test10$FlagReso, positive = '1')
+View(train90)
 
 ### Closing connection
 odbcClose(conn)
